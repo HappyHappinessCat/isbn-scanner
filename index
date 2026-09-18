@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>ISBN Scanner</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html { overscroll-behavior-y: contain; }
+
+  :root {
+    --bg: #f5f5f2;
+    --surface: #ffffff;
+    --surface2: #ebebeb;
+    --border: #d0d0cc;
+    --text: #1a1a1a;
+    --text-dim: #555;
+    --text-muted: #999;
+    --green: #16a34a;
+    --green-bg: #f0fdf4;
+    --green-border: #86efac;
+    --amber: #92400e;
+    --amber-bg: #fffbeb;
+    --amber-border: #fcd34d;
+    --red: #dc2626;
+    --mono: ui-monospace, 'SF Mono', monospace;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  /* ── KEY SETUP SCREEN ── */
+  #keyScreen {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 24px;
+    gap: 16px;
+    text-align: center;
+  }
+  #keyScreen h1 { font-size: 22px; font-weight: 600; }
+  #keyScreen p { font-size: 14px; color: var(--text-dim); line-height: 1.6; }
+  #keyInput {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 13px;
+    font-family: var(--mono);
+    background: var(--surface);
+    color: var(--text);
+    outline: none;
+  }
+  #keyInput:focus { border-color: #999; }
+  #keySaveBtn {
+    width: 100%;
+    padding: 14px;
+    background: var(--text);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  /* ── MAIN APP ── */
+  #app { flex: 1; display: none; flex-direction: column; }
+
+  /* Box number bar */
+  #boxBar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  #boxBar .label {
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  #boxControls { display: flex; align-items: center; gap: 12px; }
+  .box-adj {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 18px;
+    color: var(--text-dim);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .box-adj:active { background: var(--surface2); }
+  #boxNum {
+    font-size: 20px;
+    font-weight: 600;
+    min-width: 40px;
+    text-align: center;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 6px;
+  }
+  #boxNum:active { background: var(--surface2); }
+
+  /* Viewfinder */
+  #viewfinder {
+    position: relative;
+    background: #000;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  #cameraVideo {
+    width: 100%;
+    display: block;
+    object-fit: cover;
+  }
+  #capturedImg {
+    width: 100%;
+    display: none;
+    object-fit: cover;
+  }
+  /* Mask overlay */
+  #vfMask {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .mask-top, .mask-bottom, .mask-left, .mask-right {
+    position: absolute;
+    background: rgba(0,0,0,0.55);
+  }
+  .mask-top { top:0; left:0; right:0; }
+  .mask-bottom { bottom:0; left:0; right:0; }
+  .mask-left { left:0; }
+  .mask-right { right:0; }
+
+  /* Slot outline corners */
+  #slotOutline {
+    position: absolute;
+    pointer-events: none;
+    box-sizing: border-box;
+  }
+  #slotOutline::before, #slotOutline::after,
+  #slotOutline .corner-br, #slotOutline .corner-bl {
+    content: '';
+    position: absolute;
+    width: 16px; height: 16px;
+    border-color: #fff;
+    border-style: solid;
+  }
+  #slotOutline::before { top:-1px; left:-1px; border-width: 2px 0 0 2px; }
+  #slotOutline::after  { top:-1px; right:-1px; border-width: 2px 2px 0 0; }
+  #slotOutline .corner-br { bottom:-1px; right:-1px; border-width: 0 2px 2px 0; }
+  #slotOutline .corner-bl { bottom:-1px; left:-1px; border-width: 0 0 2px 2px; }
+
+  #vfHint {
+    position: absolute;
+    bottom: 10px;
+    left: 0; right: 0;
+    text-align: center;
+    font-size: 11px;
+    color: rgba(255,255,255,0.65);
+    letter-spacing: .06em;
+    pointer-events: none;
+  }
+
+  /* Capture / controls area */
+  #captureArea {
+    background: #111;
+    padding: 16px 24px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  #captureBtn {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    background: #fff;
+    border: 4px solid #444;
+    cursor: pointer;
+    outline: 3px solid #fff;
+    outline-offset: 4px;
+    transition: transform .1s;
+    flex-shrink: 0;
+  }
+  #captureBtn:active { transform: scale(0.93); }
+  #captureBtn.working { background: #aaa; }
+
+  /* ── REVIEW PANEL ── */
+  #reviewPanel {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 16px;
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .review-thumb {
+    width: 100%;
+    max-height: 80px;
+    object-fit: contain;
+    border-radius: 6px;
+    background: #000;
+    display: block;
+  }
+
+  .field-label {
+    font-size: 10px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+
+  #isbnFieldWrap { position: relative; }
+  #isbnField {
+    width: 100%;
+    padding: 10px 36px 10px 12px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-size: 18px;
+    font-family: var(--mono);
+    letter-spacing: .06em;
+    background: var(--surface);
+    color: var(--text);
+    outline: none;
+    -webkit-appearance: none;
+  }
+  #isbnField:focus { border-color: #666; }
+  #isbnField.valid { border-color: var(--green); }
+  #isbnField.invalid { border-color: var(--amber); }
+  #editIcon {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 16px;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  #verdictBox {
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  #verdictBox.ok { background: var(--green-bg); border: 1px solid var(--green-border); }
+  #verdictBox.warn { background: var(--amber-bg); border: 1px solid var(--amber-border); }
+  #verdictBox.err { background: #fef2f2; border: 1px solid #fca5a5; }
+  #verdictDot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+  .dot-ok { background: var(--green); }
+  .dot-warn { background: #f59e0b; }
+  .dot-err { background: var(--red); }
+  #verdictText { color: var(--text-dim); font-size: 12px; }
+  #verdictText strong { color: var(--text); }
+
+  #reviewActions { display: flex; gap: 8px; }
+  #retakeBtn {
+    flex: 1;
+    padding: 13px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 14px;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  #retakeBtn:active { background: var(--surface2); }
+  #addBtn {
+    flex: 2;
+    padding: 13px;
+    background: var(--green);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  #addBtn:active { background: #15803d; }
+  #addBtn.warn-add { background: #d97706; }
+  #addBtn.warn-add:active { background: #b45309; }
+
+  /* ── SESSION LIST ── */
+  #sessionList {
+    flex: 1;
+    padding: 16px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #listHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  #listHeader h2 { font-size: 13px; font-weight: 600; color: var(--text); }
+  #listCount { font-size: 12px; color: var(--text-muted); }
+
+  #emptyState {
+    text-align: center;
+    padding: 40px 0;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.8;
+  }
+
+  .list-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .list-item.flagged { border-color: var(--amber-border); background: var(--amber-bg); }
+  .item-isbn {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text);
+    word-break: break-all;
+  }
+  .item-isbn.flagged-text { color: var(--amber); }
+  .item-time { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+  .item-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: .06em;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  #downloadBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    margin-top: 12px;
+    padding: 13px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 14px;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  #downloadBtn:active { background: var(--surface2); }
+
+  #settingsLink {
+    text-align: center;
+    padding: 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    text-decoration: none;
+    display: block;
+  }
+
+  /* Processing spinner overlay on viewfinder */
+  #processingOverlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+  }
+  #processingOverlay.active { display: flex; }
+  #processingOverlay span {
+    color: #fff;
+    font-size: 13px;
+    letter-spacing: .06em;
+  }
+  .spinner {
+    width: 32px; height: 32px;
+    border: 3px solid rgba(255,255,255,.2);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- KEY SETUP SCREEN -->
+<div id="keyScreen">
+  <h1>ISBN Scanner</h1>
+  <p>Paste your Google Cloud Vision API key to get started. It's saved only on this device.</p>
+  <input id="keyInput" type="text" placeholder="AIza..." autocomplete="off" autocorrect="off" spellcheck="false">
+  <button id="keySaveBtn">Save and continue</button>
+  <p style="font-size:11px; color:var(--text-muted);">Need a key? Enable Cloud Vision API at console.cloud.google.com</p>
+</div>
+
+<!-- MAIN APP -->
+<div id="app">
+
+  <!-- Box number bar -->
+  <div id="boxBar">
+    <span class="label">Box</span>
+    <div id="boxControls">
+      <div class="box-adj" id="boxDown">−</div>
+      <div id="boxNum">1</div>
+      <div class="box-adj" id="boxUp">+</div>
+    </div>
+  </div>
+
+  <!-- Viewfinder -->
+  <div id="viewfinder">
+    <video id="cameraVideo" autoplay playsinline muted></video>
+    <canvas id="captureCanvas" style="display:none"></canvas>
+    <img id="capturedImg" alt="captured">
+
+    <!-- Mask + slot outline injected by JS once we know dimensions -->
+    <div id="vfMask"></div>
+    <div id="slotOutline"><div class="corner-br"></div><div class="corner-bl"></div></div>
+
+    <div id="vfHint">Center the ISBN line in the frame</div>
+
+    <div id="processingOverlay">
+      <div class="spinner"></div>
+      <span>Reading…</span>
+    </div>
+  </div>
+
+  <!-- Capture button -->
+  <div id="captureArea">
+    <button id="captureBtn" aria-label="Capture photo"></button>
+  </div>
+
+  <!-- Review panel (appears after capture) -->
+  <div id="reviewPanel">
+    <div>
+      <div class="field-label">Captured</div>
+      <img id="reviewThumb" class="review-thumb" alt="captured isbn">
+    </div>
+    <div id="isbnFieldWrap">
+      <div class="field-label">ISBN read — tap to edit</div>
+      <input id="isbnField" type="tel" inputmode="numeric" autocomplete="off" spellcheck="false">
+      <span id="editIcon">✎</span>
+    </div>
+    <div id="verdictBox">
+      <div id="verdictDot"></div>
+      <div id="verdictText"></div>
+    </div>
+    <div id="reviewActions">
+      <button id="retakeBtn">Retake</button>
+      <button id="addBtn">Add to box 1</button>
+    </div>
+  </div>
+
+  <!-- Session list -->
+  <div id="sessionList">
+    <div id="listHeader">
+      <h2>This session</h2>
+      <span id="listCount">0 scanned</span>
+    </div>
+    <div id="emptyState">Scan your first book<br>to see it appear here</div>
+    <div id="itemsContainer"></div>
+    <button id="downloadBtn" style="display:none">↓ &nbsp;Download CSV</button>
+  </div>
+
+  <a id="settingsLink">⚙ Change API key</a>
+</div>
+
+<script>
+const LS_KEY = 'isbn_scanner_api_key';
+const LS_SESSION = 'isbn_scanner_session';
+
+// ── ISBN VALIDATION ──
+function isValidISBN13(s) {
+  if (!/^\d{13}$/.test(s)) return false;
+  let t = 0;
+  for (let i = 0; i < 13; i++) t += parseInt(s[i]) * (i % 2 === 0 ? 1 : 3);
+  return t % 10 === 0;
+}
+function isValidISBN10(s) {
+  if (!/^\d{9}[\dX]$/.test(s)) return false;
+  let t = 0;
+  for (let i = 0; i < 9; i++) t += parseInt(s[i]) * (10 - i);
+  const last = s[9] === 'X' ? 10 : parseInt(s[9]);
+  t += last;
+  return t % 11 === 0;
+}
+function extractISBN(text) {
+  const cleaned = text.replace(/[^0-9X\n]/gi, ' ');
+  const lines = cleaned.split('\n');
+  const results = [];
+  for (const line of lines) {
+    const runs = line.match(/[0-9X]{9,}/gi) || [];
+    for (const run of runs) {
+      for (let len of [13, 10]) {
+        for (let i = 0; i <= run.length - len; i++) {
+          const w = run.slice(i, i + len).toUpperCase();
+          if (len === 13 && isValidISBN13(w) && (w.startsWith('978') || w.startsWith('979'))) {
+            results.push({ isbn: w, type: 13, confident: true });
+          } else if (len === 10 && isValidISBN10(w)) {
+            results.push({ isbn: w, type: 10, confident: true });
+          }
+        }
+      }
+    }
+  }
+  // deduplicate, prefer 13-digit
+  const seen = new Set();
+  return results.filter(r => { if (seen.has(r.isbn)) return false; seen.add(r.isbn); return true; })
+                .sort((a,b) => b.type - a.type);
+}
+
+// ── STATE ──
+let currentBox = 1;
+let session = [];
+let currentCapturedB64 = null;
+let stream = null;
+
+// ── DOM REFS ──
+const keyScreen   = document.getElementById('keyScreen');
+const keyInput    = document.getElementById('keyInput');
+const keySaveBtn  = document.getElementById('keySaveBtn');
+const app         = document.getElementById('app');
+const boxNum      = document.getElementById('boxNum');
+const boxUp       = document.getElementById('boxUp');
+const boxDown     = document.getElementById('boxDown');
+const video       = document.getElementById('cameraVideo');
+const captureCanvas = document.getElementById('captureCanvas');
+const capturedImg = document.getElementById('capturedImg');
+const captureBtn  = document.getElementById('captureBtn');
+const processingOverlay = document.getElementById('processingOverlay');
+const reviewPanel = document.getElementById('reviewPanel');
+const reviewThumb = document.getElementById('reviewThumb');
+const isbnField   = document.getElementById('isbnField');
+const verdictBox  = document.getElementById('verdictBox');
+const verdictDot  = document.getElementById('verdictDot');
+const verdictText = document.getElementById('verdictText');
+const addBtn      = document.getElementById('addBtn');
+const retakeBtn   = document.getElementById('retakeBtn');
+const itemsContainer = document.getElementById('itemsContainer');
+const listCount   = document.getElementById('listCount');
+const emptyState  = document.getElementById('emptyState');
+const downloadBtn = document.getElementById('downloadBtn');
+const settingsLink = document.getElementById('settingsLink');
+const vfMask      = document.getElementById('vfMask');
+const slotOutline = document.getElementById('slotOutline');
+const vfHint      = document.getElementById('vfHint');
+
+// ── KEY SCREEN ──
+function checkKey() {
+  const k = localStorage.getItem(LS_KEY);
+  if (k) { keyScreen.style.display = 'none'; app.style.display = 'flex'; startCamera(); restoreSession(); }
+  else { keyScreen.style.display = 'flex'; app.style.display = 'none'; }
+}
+
+keySaveBtn.addEventListener('click', () => {
+  const v = keyInput.value.trim();
+  if (!v) return;
+  localStorage.setItem(LS_KEY, v);
+  checkKey();
+});
+keyInput.addEventListener('keydown', e => { if (e.key === 'Enter') keySaveBtn.click(); });
+settingsLink.addEventListener('click', () => {
+  localStorage.removeItem(LS_KEY);
+  keyInput.value = '';
+  app.style.display = 'none';
+  keyScreen.style.display = 'flex';
+  stopCamera();
+});
+
+// ── BOX CONTROLS ──
+function updateBox() {
+  boxNum.textContent = currentBox;
+  addBtn.textContent = 'Add to box ' + currentBox;
+}
+boxUp.addEventListener('click', () => { currentBox++; updateBox(); });
+boxDown.addEventListener('click', () => { if (currentBox > 1) { currentBox--; updateBox(); } });
+boxNum.addEventListener('click', () => {
+  const v = prompt('Enter box number:', currentBox);
+  const n = parseInt(v);
+  if (!isNaN(n) && n >= 1) { currentBox = n; updateBox(); }
+});
+
+// ── CAMERA ──
+function buildMask() {
+  const vf = document.getElementById('viewfinder');
+  const h = vf.offsetHeight || 280;
+  const w = vf.offsetWidth || 375;
+  // slot: 75% wide, 18% tall, centered vertically
+  const slotW = Math.round(w * 0.76);
+  const slotH = Math.round(h * 0.18);
+  const slotTop = Math.round(h * 0.41);
+  const slotLeft = Math.round((w - slotW) / 2);
+
+  vfMask.innerHTML = '';
+  const addDiv = (style) => { const d = document.createElement('div'); Object.assign(d.style, style); vfMask.appendChild(d); };
+  // top
+  addDiv({ position:'absolute', top:'0', left:'0', right:'0', height: slotTop+'px', background:'rgba(0,0,0,0.55)' });
+  // bottom
+  addDiv({ position:'absolute', top:(slotTop+slotH)+'px', left:'0', right:'0', bottom:'0', background:'rgba(0,0,0,0.55)' });
+  // left
+  addDiv({ position:'absolute', top:slotTop+'px', left:'0', width:slotLeft+'px', height:slotH+'px', background:'rgba(0,0,0,0.55)' });
+  // right
+  addDiv({ position:'absolute', top:slotTop+'px', right:'0', width:(w-slotLeft-slotW)+'px', height:slotH+'px', background:'rgba(0,0,0,0.55)' });
+
+  Object.assign(slotOutline.style, {
+    top: slotTop+'px', left: slotLeft+'px', width: slotW+'px', height: slotH+'px'
+  });
+}
+
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    video.style.display = 'block';
+    capturedImg.style.display = 'none';
+    video.addEventListener('loadedmetadata', () => {
+      // Set viewfinder height based on video aspect ratio, roughly 55% of viewport
+      const vf = document.getElementById('viewfinder');
+      const aspectH = Math.round(window.innerHeight * 0.48);
+      vf.style.height = aspectH + 'px';
+      video.style.height = aspectH + 'px';
+      capturedImg.style.height = aspectH + 'px';
+      setTimeout(buildMask, 50);
+    }, { once: true });
+  } catch(e) {
+    // Camera not available — fall back to file input
+    video.style.display = 'none';
+    captureBtn.title = 'No camera access — tap to choose a photo';
+  }
+}
+
+function stopCamera() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+}
+
+// ── CAPTURE ──
+captureBtn.addEventListener('click', async () => {
+  if (captureBtn.classList.contains('working')) return;
+
+  if (!stream) {
+    // fallback: file picker
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = 'image/*'; input.capture = 'environment';
+    input.onchange = () => { if (input.files[0]) processFile(input.files[0]); };
+    input.click();
+    return;
+  }
+
+  // Capture frame from video
+  const vw = video.videoWidth, vh = video.videoHeight;
+  captureCanvas.width = vw;
+  captureCanvas.height = vh;
+  const ctx = captureCanvas.getContext('2d');
+
+  // Crop to the slot region proportionally
+  const slotTopFrac = 0.41, slotHFrac = 0.18;
+  const cropY = Math.round(vh * slotTopFrac);
+  const cropH = Math.round(vh * slotHFrac);
+  // small vertical padding for Vision context
+  const padY = Math.round(vh * 0.05);
+  const finalY = Math.max(0, cropY - padY);
+  const finalH = Math.min(vh - finalY, cropH + padY * 2);
+
+  captureCanvas.width = vw;
+  captureCanvas.height = finalH;
+  ctx.drawImage(video, 0, finalY, vw, finalH, 0, 0, vw, finalH);
+
+  const b64 = captureCanvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+  currentCapturedB64 = b64;
+
+  // Show captured frame
+  const dataUrl = 'data:image/jpeg;base64,' + b64;
+  capturedImg.src = dataUrl;
+  capturedImg.style.display = 'block';
+  video.style.display = 'none';
+
+  sendToVision(b64, dataUrl);
+});
+
+async function processFile(file) {
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const dataUrl = e.target.result;
+    const b64 = dataUrl.split(',')[1];
+    currentCapturedB64 = b64;
+    capturedImg.src = dataUrl;
+    capturedImg.style.display = 'block';
+    video.style.display = 'none';
+    sendToVision(b64, dataUrl);
+  };
+  reader.readAsDataURL(file);
+}
+
+async function sendToVision(b64, dataUrl) {
+  captureBtn.classList.add('working');
+  processingOverlay.classList.add('active');
+  reviewPanel.style.display = 'none';
+
+  const apiKey = localStorage.getItem(LS_KEY);
+  let rawText = '';
+
+  try {
+    const res = await fetch(
+      'https://vision.googleapis.com/v1/images:annotate?key=' + apiKey,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requests: [{ image: { content: b64 }, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }] }]
+        })
+      }
+    );
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err?.error?.message || 'API error ' + res.status);
+    }
+    const data = await res.json();
+    rawText = data?.responses?.[0]?.fullTextAnnotation?.text || '';
+  } catch(e) {
+    processingOverlay.classList.remove('active');
+    captureBtn.classList.remove('working');
+    showReview(dataUrl, '', 'error', 'Vision API error: ' + e.message, null);
+    return;
+  }
+
+  processingOverlay.classList.remove('active');
+  captureBtn.classList.remove('working');
+
+  const candidates = extractISBN(rawText);
+
+  if (candidates.length === 0) {
+    showReview(dataUrl, rawText.slice(0, 60) || '(no text found)', 'warn', 'No valid ISBN found — edit the number or retake', null);
+  } else {
+    const best = candidates[0];
+    const isReal13 = best.type === 13 && (best.isbn.startsWith('978') || best.isbn.startsWith('979'));
+    const isISBN10 = best.type === 10;
+    const confident = isReal13 || isISBN10;
+    const verdictType = confident ? 'ok' : 'warn';
+    const verdictMsg = confident
+      ? (isReal13 ? '<strong>Valid ISBN-13</strong> · 978/979 prefix confirmed' : '<strong>Valid ISBN-10</strong> · checksum confirmed')
+      : '<strong>Uncertain</strong> · passes checksum but check the number';
+    showReview(dataUrl, best.isbn, verdictType, verdictMsg, best.isbn);
+  }
+}
+
+function showReview(dataUrl, isbnValue, verdictType, verdictMsg, validIsbn) {
+  reviewThumb.src = dataUrl;
+
+  isbnField.value = isbnValue;
+  isbnField.className = verdictType === 'ok' ? 'valid' : (verdictType === 'warn' ? 'invalid' : '');
+
+  verdictBox.className = 'verdictBox ' + verdictType;
+  verdictDot.className = 'verdictDot dot-' + (verdictType === 'ok' ? 'ok' : verdictType === 'warn' ? 'warn' : 'err');
+  verdictText.innerHTML = verdictMsg;
+
+  addBtn.textContent = 'Add to box ' + currentBox;
+  addBtn.className = verdictType === 'ok' ? '' : 'warn-add';
+
+  reviewPanel.style.display = 'flex';
+  reviewPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // Re-validate as user edits
+  isbnField.oninput = () => {
+    const v = isbnField.value.replace(/[^0-9X]/gi, '');
+    const ok = isValidISBN13(v) || isValidISBN10(v);
+    isbnField.className = v.length >= 10 ? (ok ? 'valid' : 'invalid') : '';
+  };
+}
+
+// ── ADD TO SESSION ──
+addBtn.addEventListener('click', () => {
+  const raw = isbnField.value.replace(/\s/g, '');
+  const isFlagged = !isValidISBN13(raw) && !isValidISBN10(raw);
+  const entry = {
+    box: currentBox,
+    isbn: raw || '(unread)',
+    flagged: isFlagged,
+    time: new Date().toISOString()
+  };
+  session.unshift(entry);
+  saveSession();
+  renderList();
+  dismissReview();
+});
+
+retakeBtn.addEventListener('click', () => {
+  dismissReview();
+});
+
+function dismissReview() {
+  reviewPanel.style.display = 'none';
+  capturedImg.style.display = 'none';
+  video.style.display = 'block';
+  isbnField.value = '';
+  currentCapturedB64 = null;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── SESSION LIST ──
+function timeAgo(iso) {
+  const secs = Math.round((Date.now() - new Date(iso)) / 1000);
+  if (secs < 60) return 'just now';
+  if (secs < 3600) return Math.round(secs/60) + ' min ago';
+  return Math.round(secs/3600) + ' hr ago';
+}
+
+function renderList() {
+  listCount.textContent = session.length + ' scanned';
+  emptyState.style.display = session.length === 0 ? 'block' : 'none';
+  downloadBtn.style.display = session.length === 0 ? 'none' : 'flex';
+
+  itemsContainer.innerHTML = '';
+  for (const entry of session) {
+    const div = document.createElement('div');
+    div.className = 'list-item' + (entry.flagged ? ' flagged' : '');
+    div.innerHTML = `
+      <div>
+        <div class="item-isbn${entry.flagged ? ' flagged-text' : ''}">${entry.isbn}</div>
+        <div class="item-time">${timeAgo(entry.time)}</div>
+      </div>
+      <div class="item-box">BOX ${entry.box}</div>
+    `;
+    itemsContainer.appendChild(div);
+  }
+}
+
+function saveSession() {
+  try { localStorage.setItem(LS_SESSION, JSON.stringify(session)); } catch(e) {}
+}
+
+function restoreSession() {
+  try {
+    const s = localStorage.getItem(LS_SESSION);
+    if (s) { session = JSON.parse(s); renderList(); }
+  } catch(e) {}
+}
+
+// ── DOWNLOAD ──
+downloadBtn.addEventListener('click', () => {
+  const today = new Date().toISOString().slice(0,10);
+  const headers = ['Box','Tier','Scanned_Code','ISBN','Title','Authors','Publisher','Year','Match_Confidence','Needs_Review','Price_Low','Price_Median','Price_High','Notes'];
+  const rows = [headers.join(',')];
+  for (const e of [...session].reverse()) {
+    const row = [
+      e.box, 2, '', e.isbn, '', '', '', '',
+      '', e.flagged ? 'yes' : '', '', '', '',
+      e.flagged ? 'needs manual check' : ''
+    ];
+    rows.push(row.map(v => `"${String(v).replace(/"/g,'""')}"`).join(','));
+  }
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `isbn_session_${today}.csv`;
+  a.click();
+});
+
+// ── CLEAR SESSION (long-press download) ──
+let clearTimer;
+downloadBtn.addEventListener('pointerdown', () => {
+  clearTimer = setTimeout(() => {
+    if (confirm('Clear session list? (The CSV has not been downloaded yet — cancel if you need it first.)')) {
+      session = [];
+      saveSession();
+      renderList();
+    }
+  }, 1500);
+});
+downloadBtn.addEventListener('pointerup', () => clearTimeout(clearTimer));
+downloadBtn.addEventListener('pointerleave', () => clearTimeout(clearTimer));
+
+// ── INIT ──
+checkKey();
+window.addEventListener('resize', buildMask);
+</script>
+</body>
+</html>
