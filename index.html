@@ -522,28 +522,57 @@ function isValidISBN10(s) {
   return t % 11 === 0;
 }
 function extractISBN(text) {
-  const cleaned = text.replace(/[^0-9X\n]/gi, ' ');
-  const lines = cleaned.split('\n');
+  const seen = new Set();
   const results = [];
-  for (const line of lines) {
-    const runs = line.match(/[0-9X]{9,}/gi) || [];
+
+  function tryAdd(digits, confident) {
+    const d = digits.toUpperCase();
+    if (seen.has(d)) return false;
+    if (d.length === 13 && isValidISBN13(d) && (d.startsWith('978') || d.startsWith('979'))) {
+      seen.add(d); results.push({ isbn: d, type: 13, confident }); return true;
+    }
+    if (d.length === 10 && isValidISBN10(d)) {
+      seen.add(d); results.push({ isbn: d, type: 10, confident }); return true;
+    }
+    return false;
+  }
+
+  // Pass 1 — highest confidence: grab the digit string immediately after "ISBN" on each line.
+  // Handles formats: "ISBN 978-0-14-312013-1", "ISBN-13: 978...", "ISBN: 978...", "ISBN13 978..."
+  for (const line of text.split('\n')) {
+    const m = line.match(/ISBN[-\s:]*1[3:]?\s*([\d\-X ]{9,})/i);
+    if (m) {
+      const digits = m[1].replace(/[^0-9X]/gi, '');
+      // try 13 first, then 10
+      if (!tryAdd(digits.slice(0, 13), true)) tryAdd(digits.slice(0, 10), true);
+    }
+  }
+  // Also catch bare 978/979 prefix immediately after ISBN with no label
+  for (const line of text.split('\n')) {
+    const m = line.match(/ISBN[^0-9]*(97[89][\d\-X ]{10,})/i);
+    if (m) {
+      const digits = m[1].replace(/[^0-9X]/gi, '');
+      tryAdd(digits.slice(0, 13), true);
+    }
+  }
+
+  if (results.length > 0) return results;
+
+  // Pass 2 — fallback: slide a window over digit runs in each line separately
+  // (keeps lines separate so price digits can't bleed into ISBN digits)
+  for (const line of text.split('\n')) {
+    const cleaned = line.replace(/[^0-9X]/gi, ' ');
+    const runs = cleaned.match(/[0-9X]{9,}/gi) || [];
     for (const run of runs) {
-      for (let len of [13, 10]) {
+      for (const len of [13, 10]) {
         for (let i = 0; i <= run.length - len; i++) {
-          const w = run.slice(i, i + len).toUpperCase();
-          if (len === 13 && isValidISBN13(w) && (w.startsWith('978') || w.startsWith('979'))) {
-            results.push({ isbn: w, type: 13, confident: true });
-          } else if (len === 10 && isValidISBN10(w)) {
-            results.push({ isbn: w, type: 10, confident: true });
-          }
+          tryAdd(run.slice(i, i + len), false);
         }
       }
     }
   }
-  // deduplicate, prefer 13-digit
-  const seen = new Set();
-  return results.filter(r => { if (seen.has(r.isbn)) return false; seen.add(r.isbn); return true; })
-                .sort((a,b) => b.type - a.type);
+
+  return results.sort((a, b) => b.type - a.type);
 }
 
 // ── STATE ──
@@ -692,14 +721,23 @@ captureBtn.addEventListener('click', async () => {
   captureCanvas.height = vh;
   const ctx = captureCanvas.getContext('2d');
 
-  // Crop to the slot region proportionally
-  const slotTopFrac = 0.41, slotHFrac = 0.18;
-  const cropY = Math.round(vh * slotTopFrac);
-  const cropH = Math.round(vh * slotHFrac);
-  // small vertical padding for Vision context
-  const padY = Math.round(vh * 0.05);
-  const finalY = Math.max(0, cropY - padY);
-  const finalH = Math.min(vh - finalY, cropH + padY * 2);
+  // Map the visible slot position on screen back to video pixel coordinates.
+  // The video element may be letterboxed or cropped by object-fit:cover, so we
+  // need to account for the scale between displayed pixels and actual video pixels.
+  const displayH = video.clientHeight || video.offsetHeight;
+  const displayW = video.clientWidth  || video.offsetWidth;
+
+  // Scale factor: how many video pixels per display pixel
+  const scaleY = vh / displayH;
+  const scaleX = vw / displayW;
+
+  // Slot is at 41% down, 18% tall of the *displayed* viewfinder
+  const slotTopDisplay  = displayH * 0.41;
+  const slotHeightDisplay = displayH * 0.18;
+  const padDisplay = displayH * 0.06; // a little padding above/below for context
+
+  const finalY = Math.max(0, Math.round((slotTopDisplay - padDisplay) * scaleY));
+  const finalH = Math.min(vh - finalY, Math.round((slotHeightDisplay + padDisplay * 2) * scaleY));
 
   captureCanvas.width = vw;
   captureCanvas.height = finalH;
@@ -769,16 +807,18 @@ async function sendToVision(b64, dataUrl) {
   const candidates = extractISBN(rawText);
 
   if (candidates.length === 0) {
-    showReview(dataUrl, rawText.slice(0, 60) || '(no text found)', 'warn', 'No valid ISBN found — edit the number or retake', null);
+    // Show a cleaned-up hint in the field: just digits/hyphens from the raw text, truncated
+    const hint = rawText.replace(/[^0-9\-X]/gi, ' ').replace(/\s+/g, ' ').trim().slice(0, 30);
+    showReview(dataUrl, hint || '', 'warn', 'No valid ISBN found — edit the number or retake', null);
   } else {
     const best = candidates[0];
     const isReal13 = best.type === 13 && (best.isbn.startsWith('978') || best.isbn.startsWith('979'));
     const isISBN10 = best.type === 10;
-    const confident = isReal13 || isISBN10;
+    const confident = best.confident && (isReal13 || isISBN10);
     const verdictType = confident ? 'ok' : 'warn';
     const verdictMsg = confident
       ? (isReal13 ? '<strong>Valid ISBN-13</strong> · 978/979 prefix confirmed' : '<strong>Valid ISBN-10</strong> · checksum confirmed')
-      : '<strong>Uncertain</strong> · passes checksum but check the number';
+      : '<strong>Uncertain read</strong> · check the number before adding';
     showReview(dataUrl, best.isbn, verdictType, verdictMsg, best.isbn);
   }
 }
